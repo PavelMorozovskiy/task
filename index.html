@@ -1,24 +1,262 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8">
-  <title>Telegram Task Tracker</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link rel="stylesheet" href="style.css">
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Task Tracker</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+:root {
+  --bg: #f4f5f7;
+  --card: #ffffff;
+  --primary: #0052cc;
+  --text: #172b4d;
+  --muted: #6b778c;
+  --border: #dfe1e6;
+}
+
+body {
+  margin:0;
+  font-family: system-ui;
+  background:var(--bg);
+  color:var(--text);
+}
+
+header {
+  position: sticky;
+  top:0;
+  background:var(--bg);
+  padding:10px;
+  z-index:10;
+}
+
+.search {
+  display:flex;
+  gap:6px;
+}
+
+.search input, .search select {
+  flex:1;
+  padding:8px;
+  border-radius:6px;
+  border:1px solid var(--border);
+}
+
+.section {
+  padding:10px;
+}
+
+.task {
+  background:var(--card);
+  border-radius:8px;
+  padding:10px;
+  margin-bottom:8px;
+  border:1px solid var(--border);
+}
+
+.task.done { opacity:.5; text-decoration: line-through; }
+
+.task-header {
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+}
+
+.task small { color:var(--muted); }
+
+.star { cursor:pointer; }
+
+button {
+  border:none;
+  background:none;
+  cursor:pointer;
+}
+
+#addBtn {
+  position:fixed;
+  bottom:16px;
+  right:16px;
+  width:56px;
+  height:56px;
+  border-radius:50%;
+  background:var(--primary);
+  color:white;
+  font-size:32px;
+  box-shadow:0 4px 12px rgba(0,0,0,.2);
+}
+
+.modal {
+  position:fixed;
+  inset:0;
+  background:rgba(0,0,0,.3);
+  display:none;
+  align-items:center;
+  justify-content:center;
+  z-index:20;
+}
+
+.modal-content {
+  background:white;
+  padding:16px;
+  border-radius:10px;
+  width:90%;
+  max-width:400px;
+}
+
+.modal-content input {
+  width:100%;
+  padding:8px;
+  margin-bottom:8px;
+  border-radius:6px;
+  border:1px solid var(--border);
+}
+
+.checklist li {
+  display:flex;
+  gap:6px;
+}
+</style>
 </head>
 <body>
-  <div id="app">
-    <h1>Мои задачи</h1>
 
-    <div class="input-row">
-      <input id="taskInput" type="text" placeholder="Добавить задачу...">
-      <button id="addBtn">＋</button>
-    </div>
-
-    <ul id="taskList"></ul>
+<header>
+  <div class="search">
+    <input id="search" placeholder="Поиск..." />
+    <select id="sort">
+      <option value="created">По дате создания</option>
+      <option value="due">По сроку</option>
+      <option value="star">По важности</option>
+      <option value="alpha">А–Я</option>
+    </select>
   </div>
+</header>
 
-  <script src="app.js"></script>
+<div class="section">
+  <h3>Открытые задачи</h3>
+  <div id="openTasks"></div>
+</div>
+
+<div class="section">
+  <h3>Закрытые задачи</h3>
+  <div id="doneTasks"></div>
+</div>
+
+<button id="addBtn">+</button>
+
+<div class="modal" id="modal">
+  <div class="modal-content">
+    <input id="titleInput" placeholder="Название задачи"/>
+    <input id="dueInput" type="date"/>
+    <button id="starBtn">⭐ Важная</button>
+
+    <ul id="checklist" class="checklist"></ul>
+    <input id="checkInput" placeholder="Добавить пункт"/>
+
+    <button id="saveBtn">Сохранить</button>
+  </div>
+</div>
+
+<script>
+const tg = Telegram.WebApp; tg.expand();
+
+let tasks = JSON.parse(localStorage.getItem("tasks")||"[]");
+let editId = null;
+
+const openEl = document.getElementById("openTasks");
+const doneEl = document.getElementById("doneTasks");
+
+function save(){ localStorage.setItem("tasks",JSON.stringify(tasks)); }
+
+function render(){
+  openEl.innerHTML=""; doneEl.innerHTML="";
+  const q = search.value.toLowerCase();
+  let list = tasks.filter(t=>t.title.toLowerCase().includes(q));
+
+  const sort = document.getElementById("sort").value;
+  list.sort((a,b)=>{
+    if(sort==="alpha") return a.title.localeCompare(b.title);
+    if(sort==="star") return b.star-a.star;
+    if(sort==="due") return (a.due||"").localeCompare(b.due||"");
+    return a.created-b.created;
+  });
+
+  list.forEach(t=>{
+    const el = document.createElement("div");
+    el.className="task"+(t.done?" done":"");
+    el.innerHTML=`
+      <div class="task-header">
+        <strong>${t.title}</strong>
+        <span class="star">${t.star?"⭐":"☆"}</span>
+      </div>
+      <small>${t.due?"Срок: "+t.due:""}</small>
+    `;
+    el.onclick=()=>openModal(t.id);
+    el.querySelector(".star").onclick=(e)=>{e.stopPropagation();t.star=!t.star;save();render();};
+
+    (t.done?doneEl:openEl).appendChild(el);
+  });
+}
+
+function openModal(id){
+  modal.style.display="flex";
+  if(id){
+    const t = tasks.find(x=>x.id===id);
+    editId=id;
+    titleInput.value=t.title;
+    dueInput.value=t.due||"";
+    starBtn.dataset.star=t.star;
+    renderChecklist(t.checklist||[]);
+  } else {
+    editId=null;
+    titleInput.value=""; dueInput.value="";
+    starBtn.dataset.star=false;
+    renderChecklist([]);
+  }
+}
+
+function closeModal(){ modal.style.display="none"; }
+
+function renderChecklist(list){
+  checklist.innerHTML="";
+  list.forEach((c,i)=>{
+    const li=document.createElement("li");
+    li.innerHTML=`<input type="checkbox"${c.done?"checked":""}/> ${c.text}`;
+    checklist.appendChild(li);
+  });
+}
+
+addBtn.onclick=()=>openModal();
+saveBtn.onclick=()=>{
+  const data={
+    id:editId||Date.now(),
+    title:titleInput.value,
+    due:dueInput.value,
+    star:starBtn.dataset.star==="true",
+    done:false,
+    created:Date.now(),
+    checklist:[...checklist.children].map(li=>({text:li.textContent.trim(),done:li.querySelector("input").checked}))
+  };
+  if(editId){
+    const i=tasks.findIndex(t=>t.id===editId);
+    tasks[i]={...tasks[i],...data};
+  } else tasks.push(data);
+
+  save(); closeModal(); render();
+};
+
+checkInput.onkeypress=e=>{
+  if(e.key==="Enter"){
+    const li=document.createElement("li");
+    li.innerHTML=`<input type="checkbox"/> ${checkInput.value}`;
+    checklist.appendChild(li);
+    checkInput.value="";
+  }
+};
+
+modal.onclick=e=>{ if(e.target===modal) closeModal(); };
+
+render();
+</script>
+
 </body>
 </html>
